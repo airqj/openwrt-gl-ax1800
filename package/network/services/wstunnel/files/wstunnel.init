@@ -1,0 +1,90 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=10
+
+USE_PROCD=1
+PROG=/usr/bin/wstunnel
+
+start_service() {
+	config_load wstunnel
+	
+	config_get_bool enabled server enabled 0
+	[ $enabled -eq 1 ] && start_server
+	
+	config_get_bool enabled client enabled 0
+	[ $enabled -eq 1 ] && start_client
+}
+
+start_server() {
+	config_get mode server mode
+	[ "$mode" != "server" ] && return 1
+	
+	config_get listen_port server listen_port "8080"
+	config_get bind_address server bind_address "0.0.0.0"
+	config_get tunnel_port server tunnel_port "22"
+	config_get tunnel_host server tunnel_host "localhost"
+	config_get restrict_path server restrict_path "/tunnel"
+	config_get tls_cert server tls_cert ""
+	config_get tls_key server tls_key ""
+	config_get upgrade_path_prefix server upgrade_path_prefix "/ws"
+	config_get extra_args server extra_args ""
+	
+	local args="server"
+	args="$args --bind ${bind_address}:${listen_port}"
+	args="$args --restrict-path ${restrict_path}"
+	args="$args --upgrade-path-prefix ${upgrade_path_prefix}"
+	
+	if [ -n "$tls_cert" ] && [ -n "$tls_key" ]; then
+		args="$args --tls-certificate $tls_cert --tls-private-key $tls_key"
+	fi
+	
+	args="$args tcp://${tunnel_host}:${tunnel_port}"
+	
+	if [ -n "$extra_args" ]; then
+		args="$args $extra_args"
+	fi
+	
+	procd_open_instance server
+	procd_set_param command $PROG $args
+	procd_set_param respawn
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+start_client() {
+        config_get mode client mode
+        [ "$mode" != "client" ] && return 1
+
+        config_get server_url client server_url
+        config_get local_bind client local_bind
+        config_get http_upgrade_path_prefix client http_upgrade_path_prefix
+        config_get extra_args client extra_args ""
+
+        [ -z "$server_url" ] && {
+                echo "Server URL is required for client mode"
+                return 1
+        }
+
+        local args="client"
+        args="$args -L $local_bind"
+        args="$args --http-upgrade-path-prefix $http_upgrade_path_prefix"
+        args="$args $server_url"
+
+        if [ -n "$extra_args" ]; then
+                args="$args $extra_args"
+        fi
+
+        logger "$args"
+        procd_open_instance client
+        procd_set_param command $PROG $args
+        procd_set_param respawn
+        procd_set_param stdout 1
+        procd_set_param stderr 1
+        procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger "wstunnel"
+}
